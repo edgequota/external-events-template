@@ -1,0 +1,16 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+events-server
+
+# Test binary, build cache
+*.test
+*.out
+
+# Go workspace
+go.work
+go.work.sum
