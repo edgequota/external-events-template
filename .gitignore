@@ -6,6 +6,8 @@ bin/
 *.so
 *.dylib
 events-server
+http/http
+grpc/grpc
 
 # Test binary, build cache
 *.test

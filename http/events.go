@@ -7,45 +7,17 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+
+	"github.com/edgequota/edgequota-go/events"
+	eventsv1http "github.com/edgequota/edgequota-go/gen/http/events/v1"
 )
 
-// maxStoredEvents is the maximum number of events kept in memory.
 const maxStoredEvents = 10000
-
-// --------------------------------------------------------------------------
-// EdgeQuota HTTP events protocol types
-// --------------------------------------------------------------------------
-
-// UsageEvent mirrors edgequota.events.v1.UsageEvent as JSON.
-type UsageEvent struct {
-	Key        string `json:"key"`
-	TenantKey  string `json:"tenant_key,omitempty"`
-	Method     string `json:"method"`
-	Path       string `json:"path"`
-	Allowed    bool   `json:"allowed"`
-	Remaining  int64  `json:"remaining"`
-	Limit      int64  `json:"limit"`
-	Timestamp  string `json:"timestamp"`
-	StatusCode int    `json:"status_code"`
-	RequestID  string `json:"request_id,omitempty"`
-	Reason     string `json:"reason,omitempty"`
-}
 
 type errorResponse struct {
 	Error string `json:"error"`
 }
 
-// PublishEventsRequest mirrors edgequota.events.v1.PublishEventsRequest as JSON.
-type PublishEventsRequest struct {
-	Events []UsageEvent `json:"events"`
-}
-
-// PublishEventsResponse mirrors edgequota.events.v1.PublishEventsResponse as JSON.
-type PublishEventsResponse struct {
-	Accepted int64 `json:"accepted"`
-}
-
-// EventStats holds aggregate counters.
 type EventStats struct {
 	TotalReceived int64 `json:"total_received"`
 	TotalAllowed  int64 `json:"total_allowed"`
@@ -53,39 +25,26 @@ type EventStats struct {
 	StoredEvents  int   `json:"stored_events"`
 }
 
-// --------------------------------------------------------------------------
-// Service
-// --------------------------------------------------------------------------
-
-// EventService implements the EdgeQuota HTTP events protocol.
-// It stores received events in memory and exposes them via query endpoints.
 type EventService struct {
 	logger *slog.Logger
 
 	mu     sync.RWMutex
-	events []UsageEvent
+	stored []eventsv1http.UsageEvent
 
 	totalReceived atomic.Int64
 	totalAllowed  atomic.Int64
 	totalDenied   atomic.Int64
 }
 
-// NewEventService creates a new EventService.
 func NewEventService(logger *slog.Logger) *EventService {
 	return &EventService{
 		logger: logger,
-		events: make([]UsageEvent, 0, 1024),
+		stored: make([]eventsv1http.UsageEvent, 0, 1024),
 	}
 }
 
-// --------------------------------------------------------------------------
-// POST /events — EdgeQuota event receiver
-// --------------------------------------------------------------------------
-
-// HandlePublishEvents implements the EdgeQuota HTTP events protocol.
-// EdgeQuota posts a JSON PublishEventsRequest containing a batch of usage events.
 func (s *EventService) HandlePublishEvents(w http.ResponseWriter, r *http.Request) {
-	var req PublishEventsRequest
+	var req eventsv1http.PublishEventsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
 		return
@@ -106,22 +65,11 @@ func (s *EventService) HandlePublishEvents(w http.ResponseWriter, r *http.Reques
 	s.totalAllowed.Add(allowed)
 	s.totalDenied.Add(denied)
 
-	s.logger.Info("events received",
-		"count", count,
-		"allowed", allowed,
-		"denied", denied)
-
-	writeJSON(w, http.StatusOK, PublishEventsResponse{
-		Accepted: count,
-	})
+	s.logger.Info("events received", "count", count, "allowed", allowed, "denied", denied)
+	resp := events.Accepted(len(req.Events))
+	writeJSON(w, http.StatusOK, resp)
 }
 
-// --------------------------------------------------------------------------
-// GET /events — Query stored events
-// --------------------------------------------------------------------------
-
-// HandleListEvents returns stored events, optionally filtered.
-// Query params: tenant_key, limit (default 100).
 func (s *EventService) HandleListEvents(w http.ResponseWriter, r *http.Request) {
 	tenantFilter := r.URL.Query().Get("tenant_key")
 	limitStr := r.URL.Query().Get("limit")
@@ -133,11 +81,17 @@ func (s *EventService) HandleListEvents(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.mu.RLock()
-	result := make([]UsageEvent, 0, min(limit, len(s.events)))
-	for i := len(s.events) - 1; i >= 0 && len(result) < limit; i-- {
-		ev := s.events[i]
-		if tenantFilter != "" && ev.TenantKey != tenantFilter {
-			continue
+	result := make([]eventsv1http.UsageEvent, 0, min(limit, len(s.stored)))
+	for i := len(s.stored) - 1; i >= 0 && len(result) < limit; i-- {
+		ev := s.stored[i]
+		if tenantFilter != "" {
+			tk := ""
+			if ev.TenantKey != nil {
+				tk = *ev.TenantKey
+			}
+			if tk != tenantFilter {
+				continue
+			}
 		}
 		result = append(result, ev)
 	}
@@ -146,32 +100,22 @@ func (s *EventService) HandleListEvents(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, result)
 }
 
-// --------------------------------------------------------------------------
-// GET /events/stats — Aggregate counters
-// --------------------------------------------------------------------------
-
-// HandleStats returns aggregate event counters.
 func (s *EventService) HandleStats(w http.ResponseWriter, _ *http.Request) {
 	s.mu.RLock()
-	stored := len(s.events)
+	n := len(s.stored)
 	s.mu.RUnlock()
 
 	writeJSON(w, http.StatusOK, EventStats{
 		TotalReceived: s.totalReceived.Load(),
 		TotalAllowed:  s.totalAllowed.Load(),
 		TotalDenied:   s.totalDenied.Load(),
-		StoredEvents:  stored,
+		StoredEvents:  n,
 	})
 }
 
-// --------------------------------------------------------------------------
-// DELETE /events — Clear stored events
-// --------------------------------------------------------------------------
-
-// HandleClearEvents removes all stored events and resets counters.
 func (s *EventService) HandleClearEvents(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
-	s.events = s.events[:0]
+	s.stored = s.stored[:0]
 	s.mu.Unlock()
 	s.totalReceived.Store(0)
 	s.totalAllowed.Store(0)
@@ -181,28 +125,21 @@ func (s *EventService) HandleClearEvents(w http.ResponseWriter, _ *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// --------------------------------------------------------------------------
-// Helpers
-// --------------------------------------------------------------------------
-
-func (s *EventService) store(batch []UsageEvent) {
+func (s *EventService) store(batch []eventsv1http.UsageEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	s.events = append(s.events, batch...)
-
-	if len(s.events) > maxStoredEvents {
-		excess := len(s.events) - maxStoredEvents
-		s.events = s.events[excess:]
+	s.stored = append(s.stored, batch...)
+	if len(s.stored) > maxStoredEvents {
+		excess := len(s.stored) - maxStoredEvents
+		s.stored = s.stored[excess:]
 	}
 }
 
-// StoredEvents returns a copy of all stored events (for testing).
-func (s *EventService) StoredEvents() []UsageEvent {
+func (s *EventService) StoredEvents() []eventsv1http.UsageEvent {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := make([]UsageEvent, len(s.events))
-	copy(out, s.events)
+	out := make([]eventsv1http.UsageEvent, len(s.stored))
+	copy(out, s.stored)
 	return out
 }
 

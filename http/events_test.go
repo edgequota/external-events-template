@@ -7,13 +7,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	eventsv1http "github.com/edgequota/edgequota-go/gen/http/events/v1"
 )
 
 func testService() *EventService {
 	return NewEventService(slog.Default())
 }
 
-func publishRequest(t *testing.T, svc *EventService, req PublishEventsRequest) *httptest.ResponseRecorder {
+func publishRequest(t *testing.T, svc *EventService, req eventsv1http.PublishEventsRequest) *httptest.ResponseRecorder {
 	t.Helper()
 	body, _ := json.Marshal(req)
 	httpReq := httptest.NewRequest("POST", "/events", bytes.NewReader(body))
@@ -23,12 +25,14 @@ func publishRequest(t *testing.T, svc *EventService, req PublishEventsRequest) *
 	return w
 }
 
-func makeEvents(allowed, denied int) []UsageEvent {
-	events := make([]UsageEvent, 0, allowed+denied)
+func ptr[T any](v T) *T { return &v }
+
+func makeEvents(allowed, denied int) []eventsv1http.UsageEvent {
+	events := make([]eventsv1http.UsageEvent, 0, allowed+denied)
 	for i := range allowed {
-		events = append(events, UsageEvent{
+		events = append(events, eventsv1http.UsageEvent{
 			Key:        "10.0.0.1",
-			TenantKey:  "tenant-1",
+			TenantKey:  ptr("tenant-1"),
 			Method:     "GET",
 			Path:       "/api/v1/data",
 			Allowed:    true,
@@ -36,13 +40,13 @@ func makeEvents(allowed, denied int) []UsageEvent {
 			Limit:      100,
 			Timestamp:  "2026-02-16T21:00:00Z",
 			StatusCode: 200,
-			RequestID:  "req-allowed-" + string(rune('a'+i)),
+			RequestId:  ptr("req-allowed-" + string(rune('a'+i))),
 		})
 	}
 	for i := range denied {
-		events = append(events, UsageEvent{
+		events = append(events, eventsv1http.UsageEvent{
 			Key:        "10.0.0.1",
-			TenantKey:  "tenant-1",
+			TenantKey:  ptr("tenant-1"),
 			Method:     "POST",
 			Path:       "/api/v1/data",
 			Allowed:    false,
@@ -50,24 +54,20 @@ func makeEvents(allowed, denied int) []UsageEvent {
 			Limit:      100,
 			Timestamp:  "2026-02-16T21:00:01Z",
 			StatusCode: 429,
-			RequestID:  "req-denied-" + string(rune('a'+i)),
+			RequestId:  ptr("req-denied-" + string(rune('a'+i))),
 		})
 	}
 	return events
 }
 
-// --------------------------------------------------------------------------
-// POST /events tests
-// --------------------------------------------------------------------------
-
 func TestPublishEvents_SingleBatch(t *testing.T) {
 	svc := testService()
-	w := publishRequest(t, svc, PublishEventsRequest{Events: makeEvents(3, 2)})
+	w := publishRequest(t, svc, eventsv1http.PublishEventsRequest{Events: makeEvents(3, 2)})
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
-	var resp PublishEventsResponse
+	var resp eventsv1http.PublishEventsResponse
 	json.NewDecoder(w.Body).Decode(&resp)
 	if resp.Accepted != 5 {
 		t.Errorf("expected accepted=5, got %d", resp.Accepted)
@@ -86,7 +86,7 @@ func TestPublishEvents_SingleBatch(t *testing.T) {
 func TestPublishEvents_MultipleBatches(t *testing.T) {
 	svc := testService()
 	for range 3 {
-		publishRequest(t, svc, PublishEventsRequest{Events: makeEvents(2, 1)})
+		publishRequest(t, svc, eventsv1http.PublishEventsRequest{Events: makeEvents(2, 1)})
 	}
 	if svc.totalReceived.Load() != 9 {
 		t.Errorf("expected totalReceived=9, got %d", svc.totalReceived.Load())
@@ -99,11 +99,11 @@ func TestPublishEvents_MultipleBatches(t *testing.T) {
 
 func TestPublishEvents_EmptyBatch(t *testing.T) {
 	svc := testService()
-	w := publishRequest(t, svc, PublishEventsRequest{Events: nil})
+	w := publishRequest(t, svc, eventsv1http.PublishEventsRequest{Events: nil})
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
-	var resp PublishEventsResponse
+	var resp eventsv1http.PublishEventsResponse
 	json.NewDecoder(w.Body).Decode(&resp)
 	if resp.Accepted != 0 {
 		t.Errorf("expected accepted=0, got %d", resp.Accepted)
@@ -124,11 +124,11 @@ func TestPublishEvents_InvalidBody(t *testing.T) {
 
 func TestPublishEvents_FieldsPreserved(t *testing.T) {
 	svc := testService()
-	publishRequest(t, svc, PublishEventsRequest{
-		Events: []UsageEvent{
+	publishRequest(t, svc, eventsv1http.PublishEventsRequest{
+		Events: []eventsv1http.UsageEvent{
 			{
 				Key:        "key-1",
-				TenantKey:  "tenant-42",
+				TenantKey:  ptr("tenant-42"),
 				Method:     "DELETE",
 				Path:       "/api/v1/resource/123",
 				Allowed:    true,
@@ -136,7 +136,7 @@ func TestPublishEvents_FieldsPreserved(t *testing.T) {
 				Limit:      100,
 				Timestamp:  "2026-02-16T21:30:00Z",
 				StatusCode: 200,
-				RequestID:  "req-xyz",
+				RequestId:  ptr("req-xyz"),
 			},
 		},
 	})
@@ -146,16 +146,20 @@ func TestPublishEvents_FieldsPreserved(t *testing.T) {
 		t.Fatalf("expected 1 event, got %d", len(stored))
 	}
 	ev := stored[0]
-	if ev.Key != "key-1" || ev.TenantKey != "tenant-42" || ev.Method != "DELETE" ||
+	tk := ""
+	if ev.TenantKey != nil {
+		tk = *ev.TenantKey
+	}
+	rid := ""
+	if ev.RequestId != nil {
+		rid = *ev.RequestId
+	}
+	if ev.Key != "key-1" || tk != "tenant-42" || ev.Method != "DELETE" ||
 		ev.Path != "/api/v1/resource/123" || !ev.Allowed || ev.Remaining != 50 ||
-		ev.Limit != 100 || ev.StatusCode != 200 || ev.RequestID != "req-xyz" {
+		ev.Limit != 100 || ev.StatusCode != 200 || rid != "req-xyz" {
 		t.Errorf("event fields not preserved: %+v", ev)
 	}
 }
-
-// --------------------------------------------------------------------------
-// GET /events tests
-// --------------------------------------------------------------------------
 
 func TestListEvents_Empty(t *testing.T) {
 	svc := testService()
@@ -163,7 +167,7 @@ func TestListEvents_Empty(t *testing.T) {
 	w := httptest.NewRecorder()
 	svc.HandleListEvents(w, req)
 
-	var events []UsageEvent
+	var events []eventsv1http.UsageEvent
 	json.NewDecoder(w.Body).Decode(&events)
 	if len(events) != 0 {
 		t.Errorf("expected 0 events, got %d", len(events))
@@ -172,17 +176,17 @@ func TestListEvents_Empty(t *testing.T) {
 
 func TestListEvents_WithFilter(t *testing.T) {
 	svc := testService()
-	svc.store([]UsageEvent{
-		{Key: "k1", TenantKey: "tenant-a", Method: "GET", Path: "/a", Allowed: true, Timestamp: "t1"},
-		{Key: "k2", TenantKey: "tenant-b", Method: "GET", Path: "/b", Allowed: true, Timestamp: "t2"},
-		{Key: "k3", TenantKey: "tenant-a", Method: "POST", Path: "/a", Allowed: false, Timestamp: "t3"},
+	svc.store([]eventsv1http.UsageEvent{
+		{Key: "k1", TenantKey: ptr("tenant-a"), Method: "GET", Path: "/a", Allowed: true, Timestamp: "t1"},
+		{Key: "k2", TenantKey: ptr("tenant-b"), Method: "GET", Path: "/b", Allowed: true, Timestamp: "t2"},
+		{Key: "k3", TenantKey: ptr("tenant-a"), Method: "POST", Path: "/a", Allowed: false, Timestamp: "t3"},
 	})
 
 	req := httptest.NewRequest("GET", "/events?tenant_key=tenant-a", nil)
 	w := httptest.NewRecorder()
 	svc.HandleListEvents(w, req)
 
-	var events []UsageEvent
+	var events []eventsv1http.UsageEvent
 	json.NewDecoder(w.Body).Decode(&events)
 	if len(events) != 2 {
 		t.Errorf("expected 2 events for tenant-a, got %d", len(events))
@@ -191,9 +195,9 @@ func TestListEvents_WithFilter(t *testing.T) {
 
 func TestListEvents_WithLimit(t *testing.T) {
 	svc := testService()
-	batch := make([]UsageEvent, 10)
+	batch := make([]eventsv1http.UsageEvent, 10)
 	for i := range batch {
-		batch[i] = UsageEvent{Key: "k", TenantKey: "t", Method: "GET", Path: "/", Allowed: true, Timestamp: "ts"}
+		batch[i] = eventsv1http.UsageEvent{Key: "k", TenantKey: ptr("t"), Method: "GET", Path: "/", Allowed: true, Timestamp: "ts"}
 	}
 	svc.store(batch)
 
@@ -201,20 +205,16 @@ func TestListEvents_WithLimit(t *testing.T) {
 	w := httptest.NewRecorder()
 	svc.HandleListEvents(w, req)
 
-	var events []UsageEvent
+	var events []eventsv1http.UsageEvent
 	json.NewDecoder(w.Body).Decode(&events)
 	if len(events) != 3 {
 		t.Errorf("expected 3 events, got %d", len(events))
 	}
 }
 
-// --------------------------------------------------------------------------
-// Stats + Clear tests
-// --------------------------------------------------------------------------
-
 func TestStats(t *testing.T) {
 	svc := testService()
-	publishRequest(t, svc, PublishEventsRequest{Events: makeEvents(5, 3)})
+	publishRequest(t, svc, eventsv1http.PublishEventsRequest{Events: makeEvents(5, 3)})
 
 	req := httptest.NewRequest("GET", "/events/stats", nil)
 	w := httptest.NewRecorder()
@@ -229,7 +229,7 @@ func TestStats(t *testing.T) {
 
 func TestClearEvents(t *testing.T) {
 	svc := testService()
-	publishRequest(t, svc, PublishEventsRequest{Events: makeEvents(3, 0)})
+	publishRequest(t, svc, eventsv1http.PublishEventsRequest{Events: makeEvents(3, 0)})
 
 	req := httptest.NewRequest("DELETE", "/events", nil)
 	w := httptest.NewRecorder()
@@ -243,27 +243,20 @@ func TestClearEvents(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
-// E2E: publish → query → stats → clear
-// --------------------------------------------------------------------------
-
 func TestE2E_PublishQueryStatsClear(t *testing.T) {
 	svc := testService()
 
-	// Publish.
-	publishRequest(t, svc, PublishEventsRequest{Events: makeEvents(4, 1)})
+	publishRequest(t, svc, eventsv1http.PublishEventsRequest{Events: makeEvents(4, 1)})
 
-	// Query.
 	listReq := httptest.NewRequest("GET", "/events?limit=10", nil)
 	listW := httptest.NewRecorder()
 	svc.HandleListEvents(listW, listReq)
-	var events []UsageEvent
+	var events []eventsv1http.UsageEvent
 	json.NewDecoder(listW.Body).Decode(&events)
 	if len(events) != 5 {
 		t.Errorf("expected 5 events, got %d", len(events))
 	}
 
-	// Stats.
 	statsReq := httptest.NewRequest("GET", "/events/stats", nil)
 	statsW := httptest.NewRecorder()
 	svc.HandleStats(statsW, statsReq)
@@ -273,7 +266,6 @@ func TestE2E_PublishQueryStatsClear(t *testing.T) {
 		t.Errorf("expected totalReceived=5, got %d", stats.TotalReceived)
 	}
 
-	// Clear.
 	clearReq := httptest.NewRequest("DELETE", "/events", nil)
 	clearW := httptest.NewRecorder()
 	svc.HandleClearEvents(clearW, clearReq)
@@ -281,11 +273,10 @@ func TestE2E_PublishQueryStatsClear(t *testing.T) {
 		t.Fatalf("expected 204, got %d", clearW.Code)
 	}
 
-	// Verify empty.
 	listReq2 := httptest.NewRequest("GET", "/events", nil)
 	listW2 := httptest.NewRecorder()
 	svc.HandleListEvents(listW2, listReq2)
-	var events2 []UsageEvent
+	var events2 []eventsv1http.UsageEvent
 	json.NewDecoder(listW2.Body).Decode(&events2)
 	if len(events2) != 0 {
 		t.Errorf("expected 0 events after clear, got %d", len(events2))

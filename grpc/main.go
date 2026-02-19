@@ -21,7 +21,7 @@ import (
 	"syscall"
 	"time"
 
-	eventsv1 "github.com/edgequota/external-events-template/grpc/gen/edgequota/events/v1"
+	eventsv1 "github.com/edgequota/edgequota-go/gen/grpc/edgequota/events/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
@@ -35,7 +35,6 @@ func main() {
 
 	svc := NewEventService(logger)
 
-	// --- gRPC server ---
 	grpcServer := grpc.NewServer()
 	eventsv1.RegisterEventServiceServer(grpcServer, svc)
 	reflection.Register(grpcServer)
@@ -53,7 +52,6 @@ func main() {
 		}
 	}()
 
-	// --- HTTP server (query API) ---
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /events", svc.HandleListEvents)
 	mux.HandleFunc("GET /events/stats", svc.HandleStats)
@@ -74,7 +72,6 @@ func main() {
 		}
 	}()
 
-	// --- Graceful shutdown ---
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	<-ctx.Done()
