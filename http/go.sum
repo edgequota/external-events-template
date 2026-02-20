@@ -1,4 +1,4 @@
-github.com/edgequota/edgequota-go v0.1.0 h1:FjoVd1tzuS20sW5uqPVLTDxcsCtd1uks+kS8rqWY2qY=
-github.com/edgequota/edgequota-go v0.1.0/go.mod h1:rXzvQpML3nu7qmmpVlDp88y5NOJFiDESlEyEU3olD8k=
+github.com/edgequota/edgequota-go v0.1.12 h1:L0GXq61fQhXO8H2p6hkZaPT75Z7OuTwEqFBF5zJptLM=
+github.com/edgequota/edgequota-go v0.1.12/go.mod h1:rXzvQpML3nu7qmmpVlDp88y5NOJFiDESlEyEU3olD8k=
 github.com/oapi-codegen/runtime v1.1.2 h1:P2+CubHq8fO4Q6fV1tqDBZHCwpVpvPg7oKiYzQgXIyI=
 github.com/oapi-codegen/runtime v1.1.2/go.mod h1:SK9X900oXmPWilYR5/WKPzt3Kqxn/uS/+lbpREv+eCg=

@@ -1,7 +1,7 @@
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
-github.com/edgequota/edgequota-go v0.1.0 h1:FjoVd1tzuS20sW5uqPVLTDxcsCtd1uks+kS8rqWY2qY=
-github.com/edgequota/edgequota-go v0.1.0/go.mod h1:rXzvQpML3nu7qmmpVlDp88y5NOJFiDESlEyEU3olD8k=
+github.com/edgequota/edgequota-go v0.1.12 h1:L0GXq61fQhXO8H2p6hkZaPT75Z7OuTwEqFBF5zJptLM=
+github.com/edgequota/edgequota-go v0.1.12/go.mod h1:rXzvQpML3nu7qmmpVlDp88y5NOJFiDESlEyEU3olD8k=
 github.com/go-logr/logr v1.4.3 h1:CjnDlHq8ikf6E492q6eKboGOC0T8CDaOvkHCIg8idEI=
 github.com/go-logr/logr v1.4.3/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
 github.com/go-logr/stdr v1.2.2 h1:hSWxHoqTgW2S2qGc0LTAI563KZ5YKYRhT3MFKZMbjag=
