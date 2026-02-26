@@ -3,7 +3,7 @@ module github.com/edgequota/external-events-template/grpc
 go 1.25.4
 
 require (
-	github.com/edgequota/edgequota-go v0.3.0
+	github.com/edgequota/edgequota-go v0.4.0
 	google.golang.org/grpc v1.79.1
 )
 
